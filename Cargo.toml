@@ -1,7 +1,15 @@
 [package]
-name = "chatapp"
+name = "hello_rust"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "net", "sync", "io-util", "macros", "rt-multi-thread"] }
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+
+[profile.release]
+strip = true      # Remove debug symbols
+lto = "thin"      # Link Time Optimization for smaller binaries
+codegen-units = 1 # Better optimization (slower compile but smaller binary)
+opt-level = "z"   # Optimize for size (use "s" for balanced)
+panic = "abort"   # Removes unwinding code (if you don't need stack traces)
