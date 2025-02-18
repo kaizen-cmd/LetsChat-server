@@ -4,29 +4,66 @@ use tokio::{io::AsyncWriteExt, net::tcp::OwnedWriteHalf, sync::Mutex};
 use futures::future;
 
 pub struct Room {
-    _id: u32,
-    pub writers: Arc<Mutex<HashMap<String, OwnedWriteHalf>>>,
-    pub addr_name_map: Arc<Mutex<HashMap<String, String>>>,
+    id: u32,
+    writers: Arc<Mutex<HashMap<String, OwnedWriteHalf>>>,
+    addr_name_map: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Room {
     fn new(id: u32) -> Self {
         Room {
-            _id: id,
+            id,
             writers: Arc::new(Mutex::new(HashMap::new())),
             addr_name_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub async fn broadcast_message(&self, message: &str, from_addr: &String) {
+
+        let addr_name_map = self.addr_name_map.lock().await;
+        let name = addr_name_map.get(from_addr).unwrap();
+        let message = format!("{} > {}", name, message);
+
         let mut writers = self.writers.lock().await;
         let futures = writers
-            .iter_mut()
-            .filter(|(peer_addr, _)| *peer_addr != from_addr)
-            .map(|(_, w)| w.write_all(message.as_bytes()))
-            .collect::<Vec<_>>();
+        .iter_mut()
+        .filter(|(peer_addr, _)| *peer_addr != from_addr)
+        .map(|(_, w)| w.write_all(message.as_bytes()))
+        .collect::<Vec<_>>();
         future::join_all(futures).await;
+
         drop(writers);
+        drop(addr_name_map);
+    }
+
+    pub async fn add_writer(&self, writer: OwnedWriteHalf, addr: String, name: String) {
+        let mut writers = self.writers.lock().await;
+        writers.insert(addr.clone(), writer);
+        drop(writers);
+        
+        let mut addr_name_map = self.addr_name_map.lock().await;
+        addr_name_map.insert(addr.clone(), name);
+        drop(addr_name_map);
+    }
+
+    pub async fn remove_writer(&self, addr: &String) {
+        let mut writers = self.writers.lock().await;
+        writers.remove(addr);
+        drop(writers);
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        let writers = self.writers.lock().await;
+        let is_empty = writers.is_empty();
+        drop(writers);
+        is_empty
+    }
+
+    pub async fn get_name_from_addr(&self, addr: &String) -> String {
+        let addr_name_map = self.addr_name_map.lock().await;
+        let name = addr_name_map.get(addr).unwrap().clone();
+        drop(addr_name_map);
+        name
     }
 }
 
@@ -51,5 +88,23 @@ impl RoomsManager {
     pub async fn create_room(&self, room_id: u32) {
         let mut rooms = self.rooms.lock().await;
         rooms.insert(room_id, Arc::new(Room::new(room_id)));
+        drop(rooms);
+    }
+
+    pub async fn delete_room(&self, room_id: u32) {
+        let mut rooms = self.rooms.lock().await;
+        rooms.remove(&room_id);
+        drop(rooms);
+    }
+
+    pub async fn get_room_ids_string(&self) -> String {
+        let rooms = self.rooms.lock().await;
+        let room_ids_string = rooms
+            .keys()
+            .map(|id| id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        drop(rooms);
+        room_ids_string
     }
 }

@@ -1,3 +1,4 @@
+mod arts;
 mod rooms;
 
 use rooms::RoomsManager;
@@ -9,7 +10,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::OwnedWriteHalf,
 };
-
 
 pub struct Server {
     listener: tokio::net::TcpListener,
@@ -26,7 +26,7 @@ impl Server {
     }
 
     pub async fn start(server_instance: Arc<Server>) {
-        println!("Listening on port 8000");
+        println!("{}\n Listening on port 8000", arts::art());
         loop {
             let (socket, addr) = server_instance.listener.accept().await.unwrap();
             let (mut reader, mut writer) = socket.into_split();
@@ -44,16 +44,12 @@ impl Server {
 
                     if bytes_read == 0 {
                         server_instance_clone
-                            .handle_disconnect(room_id, addr.to_string())
+                            .handle_disconnect(room_id, &addr.to_string())
                             .await;
                         break;
                     }
 
-                    let message = format!(
-                        "{}: {}",
-                        addr,
-                        String::from_utf8(buf[..bytes_read].to_vec()).unwrap()
-                    );
+                    let message = String::from_utf8(buf[..bytes_read].to_vec()).unwrap();
 
                     server_instance_clone
                         .broadcast_message_to_room(room_id, &message, &addr.to_string())
@@ -79,11 +75,8 @@ impl Server {
         let message: String = String::from_utf8(buf[..bytes_read].to_vec()).unwrap();
         let room_id_name: Vec<&str> = message.split(' ').collect::<Vec<_>>();
 
-        let room_id = room_id_name[0]
-            .parse::<u32>()
-            .unwrap();
-
-        let name = room_id_name[1].to_string();
+        let room_id = room_id_name[0].parse::<u32>().unwrap();
+        let name = room_id_name[1].to_string().trim().to_string();
 
         let room = match self.rooms_manager.get_room(room_id).await {
             Some(r) => r,
@@ -93,47 +86,44 @@ impl Server {
             }
         };
 
-        let mut addr_name_map = room.addr_name_map.lock().await;
-        addr_name_map.insert(from_addr.clone(), name);
-        drop(addr_name_map);
+        room.add_writer(writer, from_addr.clone(), name.clone())
+            .await;
 
-        let mut writers = room.writers.lock().await;
-        writers.insert(from_addr.clone(), writer);
-        drop(writers);
-
-        let message = format!("{:?} joined the room\n", from_addr);
-        self.broadcast_message_to_room(room_id, &message, from_addr).await;
-        println!("{:?} joined room {:?}", from_addr, room_id);
+        let message = format!(
+            "{:?} joined the room {} from address {}\n",
+            name, room_id, from_addr
+        );
+        println!("{}", message);
+        self.broadcast_message_to_room(room_id, &message, from_addr)
+            .await;
         return room_id;
     }
 
-    async fn handle_disconnect(&self, room_id: u32, from_addr: String) {
-        let rooms = self.rooms_manager.rooms.lock().await;
+    async fn handle_disconnect(&self, room_id: u32, from_addr: &String) {
         let room = self.rooms_manager.get_room(room_id).await.unwrap();
-        drop(rooms);
-        room.writers.lock().await.remove(&from_addr);
-        if room.writers.lock().await.is_empty() {
-            self.rooms_manager.rooms.lock().await.remove(&room_id);
+        room.remove_writer(from_addr).await;
+
+        if room.is_empty().await {
+            self.rooms_manager.delete_room(room_id).await;
             return;
         }
-        let message = format!("{:?} left the room\n", from_addr);
-        self.broadcast_message_to_room(room_id, &message, &from_addr).await;
+
+        let message = format!(
+            "{:?} left the room\n",
+            room.get_name_from_addr(&from_addr).await
+        );
+        self.broadcast_message_to_room(room_id, &message, &from_addr)
+            .await;
         println!("{:?} left room {:?}", from_addr, room_id);
     }
 
     async fn send_welcome_prompt(&self, writer: &mut OwnedWriteHalf) {
-        let rooms = self.rooms_manager.rooms.lock().await;
-        let room_ids_string = rooms
-            .keys()
-            .map(|id| id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        drop(rooms);
+        let room_ids_string = self.rooms_manager.get_room_ids_string().await;
 
         let room_selection_prompt = format!(
-            "Welcome to the server! Select the room you want to connect.\n
-            Available rooms: {}\n
-            For eg: If you want to join room 12 as John, send '12 John'\n
+            "Welcome to the server! Select the room you want to connect.
+            Available rooms: {}
+            For eg: If you want to join room 12 as John, send '12 John'
             New number creates a new room\n",
             room_ids_string
         );
