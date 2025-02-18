@@ -18,6 +18,28 @@ impl Room {
         }
     }
 
+    pub async fn room_info(&self) -> String {
+        let writers = self.writers.lock().await;
+        let addr_name_map = self.addr_name_map.lock().await;
+        let clients_info = writers
+        .keys()
+        .map(|addr| {
+            let name = addr_name_map.get(addr).unwrap();
+            format!("{}", name)
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+        drop(writers);
+        drop(addr_name_map);
+        let mut room_info = format!("Room ID: {}\n", self.id);
+        if !clients_info.is_empty() {
+            room_info.push_str("Members in this room\n");
+        }
+        room_info.push_str(&clients_info);
+        room_info.push_str("\n==========\n");
+        room_info
+    }
+
     pub async fn broadcast_message(&self, message: &str, from_addr: &String) {
 
         let addr_name_map = self.addr_name_map.lock().await;

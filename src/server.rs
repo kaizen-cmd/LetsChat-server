@@ -67,7 +67,7 @@ impl Server {
     async fn handle_room_join(
         &self,
         from_addr: &String,
-        writer: OwnedWriteHalf,
+        mut writer: OwnedWriteHalf,
         reader: &mut OwnedReadHalf,
     ) -> u32 {
         let mut buf = vec![0u8; 10];
@@ -85,13 +85,15 @@ impl Server {
                 self.rooms_manager.get_room(room_id).await.unwrap()
             }
         };
+        
+        writer.write_all(room.room_info().await.as_bytes()).await.unwrap();
 
         room.add_writer(writer, from_addr.clone(), name.clone())
             .await;
 
         let message = format!(
-            "{:?} joined the room {} from address {}\n",
-            name, room_id, from_addr
+            "{:?} joined the room {}",
+            name, room_id
         );
         println!("{}", message);
         self.broadcast_message_to_room(room_id, &message, from_addr)
@@ -122,9 +124,9 @@ impl Server {
 
         let room_selection_prompt = format!(
             "Welcome to the server! Select the room you want to connect.
-            Available rooms: {}
-            For eg: If you want to join room 12 as John, send '12 John'
-            New number creates a new room\n",
+Available rooms: {}
+For eg: If you want to join room 12 as John, send '12 John'
+New number creates a new room\n",
             room_ids_string
         );
         writer
