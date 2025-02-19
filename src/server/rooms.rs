@@ -44,7 +44,7 @@ impl Room {
 
         let addr_name_map = self.addr_name_map.lock().await;
         let name = addr_name_map.get(from_addr).unwrap();
-        let message = format!("{} > {}", name, message);
+        let message = format!("{} > {}", name, message.trim());
 
         let mut writers = self.writers.lock().await;
         let futures = writers
