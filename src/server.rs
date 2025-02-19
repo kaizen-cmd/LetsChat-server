@@ -75,7 +75,13 @@ impl Server {
         let message: String = String::from_utf8(buf[..bytes_read].to_vec()).unwrap();
         let room_id_name: Vec<&str> = message.split(' ').collect::<Vec<_>>();
 
-        let room_id = room_id_name[0].parse::<u32>().unwrap();
+        let room_id = match room_id_name[0].parse::<u32>() {
+            Ok(id) => id,
+            Err(_) => {
+                return 0;
+            }
+        };
+
         let name = room_id_name[1].to_string().trim().to_string();
 
         let room = match self.rooms_manager.get_room(room_id).await {
@@ -85,16 +91,16 @@ impl Server {
                 self.rooms_manager.get_room(room_id).await.unwrap()
             }
         };
-        
-        writer.write_all(room.room_info().await.as_bytes()).await.unwrap();
+
+        writer
+            .write_all(room.room_info().await.as_bytes())
+            .await
+            .unwrap();
 
         room.add_writer(writer, from_addr.clone(), name.clone())
             .await;
 
-        let message = format!(
-            "{:?} joined the room {}",
-            name, room_id
-        );
+        let message = format!("{:?} joined the room {}", name, room_id);
         println!("{}", message);
         self.broadcast_message_to_room(room_id, &message, from_addr)
             .await;
@@ -102,7 +108,10 @@ impl Server {
     }
 
     async fn handle_disconnect(&self, room_id: u32, from_addr: &String) {
-        let room = self.rooms_manager.get_room(room_id).await.unwrap();
+        let room = match self.rooms_manager.get_room(room_id).await {
+            Some(r) => r,
+            None => return,
+        };
         room.remove_writer(from_addr).await;
 
         if room.is_empty().await {
@@ -116,7 +125,11 @@ impl Server {
         );
         self.broadcast_message_to_room(room_id, &message, &from_addr)
             .await;
-        println!("{:?} left room {:?}", from_addr, room_id);
+        println!(
+            "{:?} left room {:?}",
+            room.get_name_from_addr(&from_addr).await,
+            room_id
+        );
     }
 
     async fn send_welcome_prompt(&self, writer: &mut OwnedWriteHalf) {
