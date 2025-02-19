@@ -122,11 +122,6 @@ impl Server {
         };
         room.remove_writer(from_addr).await;
 
-        if room.is_empty().await {
-            self.rooms_manager.delete_room(room_id).await;
-            return;
-        }
-
         let message = format!(
             "{:?} left the room\n",
             room.get_name_from_addr(&from_addr).await
@@ -138,6 +133,11 @@ impl Server {
             room.get_name_from_addr(&from_addr).await,
             room_id
         );
+
+        if room.is_empty().await {
+            self.rooms_manager.delete_room(room_id).await;
+            return;
+        }
     }
 
     async fn send_welcome_prompt(&self, writer: &mut OwnedWriteHalf) {
