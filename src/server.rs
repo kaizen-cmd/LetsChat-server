@@ -40,7 +40,15 @@ impl Server {
 
                 loop {
                     let mut buf = vec![0u8; 1024];
-                    let bytes_read = reader.read(&mut buf).await.unwrap();
+                    let bytes_read = match reader.read(&mut buf).await {
+                        Ok(bytes_read) => bytes_read,
+                        Err(_) => {
+                            server_instance_clone
+                                .handle_disconnect(room_id, &addr.to_string())
+                                .await;
+                            break;
+                        }
+                    };
 
                     if bytes_read == 0 {
                         server_instance_clone
