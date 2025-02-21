@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::{io::AsyncWriteExt, net::tcp::OwnedWriteHalf, sync::Mutex};
 use futures::future;
+use tokio::{io::AsyncWriteExt, net::tcp::OwnedWriteHalf, sync::Mutex};
 
 pub struct Room {
     id: u32,
@@ -22,13 +22,13 @@ impl Room {
         let writers = self.writers.lock().await;
         let addr_name_map = self.addr_name_map.lock().await;
         let clients_info = writers
-        .keys()
-        .map(|addr| {
-            let name = addr_name_map.get(addr).unwrap();
-            format!("{}", name)
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+            .keys()
+            .map(|addr| {
+                let name = addr_name_map.get(addr).unwrap();
+                format!("- {}", name)
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
         drop(writers);
         drop(addr_name_map);
         let mut room_info = format!("Room ID: {}\n", self.id);
@@ -36,22 +36,21 @@ impl Room {
             room_info.push_str("Members in this room\n");
         }
         room_info.push_str(&clients_info);
-        room_info.push_str("\n==========\n");
+        room_info.push_str("\n");
         room_info
     }
 
     pub async fn broadcast_message(&self, message: &str, from_addr: &String) {
-
         let addr_name_map = self.addr_name_map.lock().await;
         let name = addr_name_map.get(from_addr).unwrap();
         let message = format!("{} > {}", name, message.trim());
 
         let mut writers = self.writers.lock().await;
         let futures = writers
-        .iter_mut()
-        .filter(|(peer_addr, _)| *peer_addr != from_addr)
-        .map(|(_, w)| w.write_all(message.as_bytes()))
-        .collect::<Vec<_>>();
+            .iter_mut()
+            .filter(|(peer_addr, _)| *peer_addr != from_addr)
+            .map(|(_, w)| w.write_all(message.as_bytes()))
+            .collect::<Vec<_>>();
         future::join_all(futures).await;
 
         drop(writers);
@@ -62,7 +61,7 @@ impl Room {
         let mut writers = self.writers.lock().await;
         writers.insert(addr.clone(), writer);
         drop(writers);
-        
+
         let mut addr_name_map = self.addr_name_map.lock().await;
         addr_name_map.insert(addr.clone(), name);
         drop(addr_name_map);
