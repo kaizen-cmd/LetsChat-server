@@ -38,7 +38,6 @@ impl Room {
             room_info.push_str("Members in this room\n");
         }
         room_info.push_str(&clients_info);
-        room_info.push_str("\n");
         room_info
     }
 

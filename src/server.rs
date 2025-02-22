@@ -211,13 +211,13 @@ immediately after joining the room {}",
 
         let room_selection_prompt = format!(
             "Welcome to the server! Select the room you want to connect.
-Available rooms: {}\n",
+Available rooms: {}",
             room_ids_string
         );
-        match writer.write(room_selection_prompt.as_bytes()).await {
+        match writer.write_all(room_selection_prompt.as_bytes()).await {
             Ok(_) => {}
             Err(e) => {
-                println!("Client left immediately after joining");
+                println!("Client left immediately after joining {}", e);
                 return false;
             }
         };
