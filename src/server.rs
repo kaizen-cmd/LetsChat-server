@@ -18,7 +18,9 @@ pub struct Server {
 
 impl Server {
     pub async fn new() -> Self {
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
+            .await
+            .expect("Server failed to start");
         Server {
             listener,
             rooms_manager: RoomsManager::new(),
@@ -28,15 +30,33 @@ impl Server {
     pub async fn start(server_instance: Arc<Server>) {
         println!("{}\n Listening on port 8000", arts::art());
         loop {
-            let (socket, addr) = server_instance.listener.accept().await.unwrap();
+            let (socket, addr) = match server_instance.listener.accept().await {
+                Ok(socket_addr) => socket_addr,
+                Err(e) => {
+                    println!("An incoming connection failed with error {}", e.to_string());
+                    continue;
+                }
+            };
+
+            println!("New client joined from address {}", addr);
+
             let (mut reader, mut writer) = socket.into_split();
             let server_instance_clone = server_instance.clone();
 
             tokio::spawn(async move {
-                server_instance_clone.send_welcome_prompt(&mut writer).await;
-                let room_id = server_instance_clone
+                let result = server_instance_clone.send_welcome_prompt(&mut writer).await;
+
+                if !result {
+                    return;
+                }
+
+                let (result, room_id) = server_instance_clone
                     .handle_room_join(&addr.to_string(), writer, &mut reader)
                     .await;
+
+                if !result {
+                    return;
+                }
 
                 loop {
                     let mut buf = vec![0u8; 1024];
@@ -57,7 +77,13 @@ impl Server {
                         break;
                     }
 
-                    let message = String::from_utf8(buf[..bytes_read].to_vec()).unwrap();
+                    let message = match String::from_utf8(buf[..bytes_read].to_vec()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("chat message conversion failed bytes to string {}", e);
+                            continue;
+                        }
+                    };
 
                     server_instance_clone
                         .broadcast_message_to_room(room_id, &message, &addr.to_string())
@@ -77,42 +103,82 @@ impl Server {
         from_addr: &String,
         mut writer: OwnedWriteHalf,
         reader: &mut OwnedReadHalf,
-    ) -> u32 {
-        let mut buf = vec![0u8; 10];
-        let bytes_read = reader.read(&mut buf).await.unwrap();
-        let message: String = String::from_utf8(buf[..bytes_read].to_vec()).unwrap();
-        let room_id_name: Vec<&str> = message.split(' ').collect::<Vec<_>>();
-
-        let room_id = match room_id_name[0].parse::<u32>() {
-            Ok(id) => id,
-            Err(_) => {
-                return 0;
+    ) -> (bool, u32) {
+        for _ in 1..5 {
+            let mut buf = vec![0u8; 10];
+            let bytes_read = match reader.read(&mut buf).await {
+                Ok(bytes_read) => bytes_read,
+                Err(e) => {
+                    println!("handle_room_join_error {}", e);
+                    continue;
+                }
+            };
+            if bytes_read == 0 {
+                println!("Disconnected without creaeting or joining any room");
+                return (false, 0);
             }
-        };
+            let message = match String::from_utf8(buf[..bytes_read].to_vec()) {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("handle_room_join_error {}", e);
+                    continue;
+                }
+            };
+            let room_id_name: Vec<&str> = message.split(' ').collect::<Vec<_>>();
 
-        let name = room_id_name[1].to_string().trim().to_string();
-
-        let room = match self.rooms_manager.get_room(room_id).await {
-            Some(r) => r,
-            None => {
-                self.rooms_manager.create_room(room_id).await;
-                self.rooms_manager.get_room(room_id).await.unwrap()
+            if room_id_name.len() != 2 {
+                println!("handle_room_join_error Failed to parse the join message");
+                continue;
             }
-        };
 
-        writer
-            .write_all(room.room_info().await.as_bytes())
-            .await
-            .unwrap();
+            let room_id = match room_id_name[0].parse::<u32>() {
+                Ok(id) => id,
+                Err(e) => {
+                    println!("handle_room_join_error {}", e);
+                    continue;
+                }
+            };
 
-        room.add_writer(writer, from_addr.clone(), name.clone())
-            .await;
+            let name = room_id_name[1].to_string().trim().to_string();
 
-        let message = format!("{:?} joined the room {}", name, room_id);
-        println!("{}", message);
-        self.broadcast_message_to_room(room_id, &message, from_addr)
-            .await;
-        return room_id;
+            let room = match self.rooms_manager.get_room(room_id).await {
+                Some(r) => r,
+                None => {
+                    self.rooms_manager.create_room(room_id).await;
+                    match self.rooms_manager.get_room(room_id).await {
+                        Some(r) => r,
+                        None => {
+                            println!("handle_room_join_error Failed to create room");
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            match writer.write_all(room.room_info().await.as_bytes()).await {
+                Ok(b) => b,
+                Err(e) => {
+                    println!(
+                        "handle_room_join_error client disconnected 
+immediately after joining the room {}",
+                        e
+                    );
+                    self.handle_disconnect(room_id, from_addr).await;
+                    return (false, 0);
+                }
+            }
+
+            room.add_writer(writer, from_addr.clone(), name.clone())
+                .await;
+            let message = format!("{:?} joined the room {}", name, room_id);
+            println!("{}", message);
+            self.broadcast_message_to_room(room_id, &message, from_addr)
+                .await;
+
+            return (true, room_id);
+        }
+        println!("handle_room_join_error failed joining the room");
+        return (false, 0);
     }
 
     async fn handle_disconnect(&self, room_id: u32, from_addr: &String) {
@@ -140,19 +206,21 @@ impl Server {
         }
     }
 
-    async fn send_welcome_prompt(&self, writer: &mut OwnedWriteHalf) {
+    async fn send_welcome_prompt(&self, writer: &mut OwnedWriteHalf) -> bool {
         let room_ids_string = self.rooms_manager.get_room_ids_string().await;
 
         let room_selection_prompt = format!(
             "Welcome to the server! Select the room you want to connect.
-Available rooms: {}
-For eg: If you want to join room 12 as John, send '12 John'
-New number creates a new room\n",
+Available rooms: {}\n",
             room_ids_string
         );
-        writer
-            .write(room_selection_prompt.as_bytes())
-            .await
-            .unwrap();
+        match writer.write(room_selection_prompt.as_bytes()).await {
+            Ok(_) => {}
+            Err(e) => {
+                println!("Client left immediately after joining");
+                return false;
+            }
+        };
+        return true;
     }
 }

@@ -7,14 +7,16 @@ pub struct Room {
     id: u32,
     writers: Arc<Mutex<HashMap<String, OwnedWriteHalf>>>,
     addr_name_map: Arc<Mutex<HashMap<String, String>>>,
+    member_limit: u8,
 }
 
 impl Room {
-    fn new(id: u32) -> Self {
+    fn new(id: u32, member_limit: u8) -> Self {
         Room {
             id,
             writers: Arc::new(Mutex::new(HashMap::new())),
             addr_name_map: Arc::new(Mutex::new(HashMap::new())),
+            member_limit,
         }
     }
 
@@ -108,7 +110,7 @@ impl RoomsManager {
 
     pub async fn create_room(&self, room_id: u32) {
         let mut rooms = self.rooms.lock().await;
-        rooms.insert(room_id, Arc::new(Room::new(room_id)));
+        rooms.insert(room_id, Arc::new(Room::new(room_id, 128)));
         drop(rooms);
     }
 
