@@ -110,7 +110,7 @@ impl Server {
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
                     println!("handle_room_join_error {}", e);
-                    continue;
+                    return (false, 0);
                 }
             };
             if bytes_read == 0 {
@@ -121,6 +121,7 @@ impl Server {
                 Ok(m) => m,
                 Err(e) => {
                     println!("handle_room_join_error {}", e);
+                    writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
                     continue;
                 }
             };
@@ -128,6 +129,7 @@ impl Server {
 
             if room_id_name.len() != 2 {
                 println!("handle_room_join_error Failed to parse the join message");
+                writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
                 continue;
             }
 
@@ -149,6 +151,7 @@ impl Server {
                         Some(r) => r,
                         None => {
                             println!("handle_room_join_error Failed to create room");
+                            writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
                             continue;
                         }
                     }
