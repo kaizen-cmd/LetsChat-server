@@ -214,8 +214,8 @@ immediately after joining the room {}",
 
         let room_selection_prompt = format!(
             "Select the room you want to connect.\n
-            Exisiting rooms - {}\n
-            New number create a new room (1 - 99999)",
+Exisiting rooms - {}\n
+New number create a new room (1 - 99999)",
             room_ids_string
         );
         match writer.write_all(room_selection_prompt.as_bytes()).await {
