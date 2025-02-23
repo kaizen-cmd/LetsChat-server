@@ -213,8 +213,9 @@ immediately after joining the room {}",
         let room_ids_string = self.rooms_manager.get_room_ids_string().await;
 
         let room_selection_prompt = format!(
-            "Welcome to the server! Select the room you want to connect.
-Available rooms: {}",
+            "Select the room you want to connect.\n
+            Exisiting rooms - {}\n
+            New number create a new room (1 - 99999)",
             room_ids_string
         );
         match writer.write_all(room_selection_prompt.as_bytes()).await {
