@@ -77,23 +77,15 @@ impl Server {
                         break;
                     }
 
-                    let message = match String::from_utf8(buf[..bytes_read].to_vec()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            println!("chat message conversion failed bytes to string {}", e);
-                            continue;
-                        }
-                    };
-
                     server_instance_clone
-                        .broadcast_message_to_room(room_id, &message, &addr.to_string())
+                        .broadcast_message_to_room(room_id, &buf[..bytes_read], &addr.to_string())
                         .await;
                 }
             });
         }
     }
 
-    async fn broadcast_message_to_room(&self, room_id: u32, message: &str, from_addr: &String) {
+    async fn broadcast_message_to_room(&self, room_id: u32, message: &[u8], from_addr: &String) {
         let room = self.rooms_manager.get_room(room_id).await.unwrap();
         room.broadcast_message(message, from_addr).await;
     }
@@ -175,7 +167,7 @@ immediately after joining the room {}",
                 .await;
             let message = format!("{:?} joined the room {}", name, room_id);
             println!("{}", message);
-            self.broadcast_message_to_room(room_id, &message, from_addr)
+            self.broadcast_message_to_room(room_id, &message.as_bytes(), from_addr)
                 .await;
 
             return (true, room_id);
@@ -195,7 +187,7 @@ immediately after joining the room {}",
             "{:?} left the room\n",
             room.get_name_from_addr(&from_addr).await
         );
-        self.broadcast_message_to_room(room_id, &message, &from_addr)
+        self.broadcast_message_to_room(room_id, &message.as_bytes(), &from_addr)
             .await;
         println!(
             "{:?} left room {:?}",

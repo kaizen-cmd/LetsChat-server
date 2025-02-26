@@ -41,16 +41,14 @@ impl Room {
         room_info
     }
 
-    pub async fn broadcast_message(&self, message: &str, from_addr: &String) {
+    pub async fn broadcast_message(&self, message: &[u8], from_addr: &String) {
         let addr_name_map = self.addr_name_map.lock().await;
-        let name = addr_name_map.get(from_addr).unwrap();
-        let message = format!("{} > {}", name, message.trim());
 
         let mut writers = self.writers.lock().await;
         let futures = writers
             .iter_mut()
             .filter(|(peer_addr, _)| *peer_addr != from_addr)
-            .map(|(_, w)| w.write_all(message.as_bytes()))
+            .map(|(_, w)| w.write_all(&message))
             .collect::<Vec<_>>();
         future::join_all(futures).await;
 
