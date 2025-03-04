@@ -3,6 +3,7 @@ mod rooms;
 
 use rooms::RoomsManager;
 
+use core::str;
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 
@@ -13,6 +14,7 @@ use tokio::{
 
 pub struct Server {
     listener: tokio::net::TcpListener,
+    udp_listener: tokio::net::UdpSocket,
     rooms_manager: RoomsManager,
 }
 
@@ -21,68 +23,112 @@ impl Server {
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
             .await
             .expect("Server failed to start");
+        let udp_listener = tokio::net::UdpSocket::bind("0.0.0.0:9000").await.unwrap();
         Server {
             listener,
+            udp_listener,
             rooms_manager: RoomsManager::new(),
         }
     }
 
     pub async fn start(server_instance: Arc<Server>) {
         println!("{}\n Listening on port 8000", arts::art());
-        loop {
-            let (socket, addr) = match server_instance.listener.accept().await {
-                Ok(socket_addr) => socket_addr,
-                Err(e) => {
-                    println!("An incoming connection failed with error {}", e.to_string());
-                    continue;
-                }
-            };
+        let server_instance_clone = server_instance.clone();
+        // tcp server task
+        tokio::spawn(async move {
+            loop {
+                let (socket, addr) = match server_instance.listener.accept().await {
+                    Ok(socket_addr) => socket_addr,
+                    Err(e) => {
+                        println!("An incoming connection failed with error {}", e.to_string());
+                        continue;
+                    }
+                };
 
-            println!("New client joined from address {}", addr);
+                println!("New client joined from address {}", addr);
 
-            let (mut reader, mut writer) = socket.into_split();
-            let server_instance_clone = server_instance.clone();
+                let (mut reader, mut writer) = socket.into_split();
+                let server_instance_clone = server_instance.clone();
 
-            tokio::spawn(async move {
-                let result = server_instance_clone.send_welcome_prompt(&mut writer).await;
+                tokio::spawn(async move {
+                    let result = server_instance_clone.send_welcome_prompt(&mut writer).await;
 
-                if !result {
-                    return;
-                }
+                    if !result {
+                        return;
+                    }
 
-                let (result, room_id) = server_instance_clone
-                    .handle_room_join(&addr.to_string(), writer, &mut reader)
-                    .await;
+                    let (result, room_id) = server_instance_clone
+                        .handle_room_join(&addr.to_string(), writer, &mut reader)
+                        .await;
 
-                if !result {
-                    return;
-                }
+                    if !result {
+                        return;
+                    }
 
-                loop {
-                    let mut buf = vec![0u8; 1024];
-                    let bytes_read = match reader.read(&mut buf).await {
-                        Ok(bytes_read) => bytes_read,
-                        Err(_) => {
+                    loop {
+                        let mut buf = vec![0u8; 1024];
+                        let bytes_read = match reader.read(&mut buf).await {
+                            Ok(bytes_read) => bytes_read,
+                            Err(_) => {
+                                server_instance_clone
+                                    .handle_disconnect(room_id, &addr.to_string())
+                                    .await;
+                                break;
+                            }
+                        };
+
+                        if bytes_read == 0 {
                             server_instance_clone
                                 .handle_disconnect(room_id, &addr.to_string())
                                 .await;
                             break;
                         }
-                    };
 
-                    if bytes_read == 0 {
                         server_instance_clone
-                            .handle_disconnect(room_id, &addr.to_string())
+                            .broadcast_message_to_room(
+                                room_id,
+                                &buf[..bytes_read],
+                                &addr.to_string(),
+                            )
                             .await;
-                        break;
                     }
+                });
+            }
+        });
 
-                    server_instance_clone
-                        .broadcast_message_to_room(room_id, &buf[..bytes_read], &addr.to_string())
-                        .await;
+        // udp server task
+        tokio::spawn(async move {
+            loop {
+                // first 4 bytes contain room id, next 256 bytes contain audio data
+                let mut buf = [0u8; 2080];
+                let (_bytes_read, src_addr) = server_instance_clone
+                    .udp_listener
+                    .recv_from(&mut buf)
+                    .await
+                    .unwrap();
+
+                let room_id = str::from_utf8(&buf[..31]).unwrap().parse::<u32>().unwrap();
+                let audio_data = &buf[32..];
+
+                // add src_addr to room if not present
+                let src_addr = src_addr.to_string();
+                let room = server_instance_clone.rooms_manager.get_room(room_id).await.unwrap();
+                let mut udp_clients = room.udp_clients.lock().await;
+                if !udp_clients.contains(&src_addr) {
+                    udp_clients.insert(src_addr.clone());
                 }
-            });
-        }
+                
+                // broadcast audio data
+                for c in udp_clients.iter() {
+                    if c == &src_addr {
+                        continue;
+                    }
+                    server_instance_clone.udp_listener.send_to(audio_data, c).await.unwrap();
+                }
+
+                drop(udp_clients);
+            }
+        });
     }
 
     async fn broadcast_message_to_room(&self, room_id: u32, message: &[u8], from_addr: &String) {
@@ -113,7 +159,10 @@ impl Server {
                 Ok(m) => m,
                 Err(e) => {
                     println!("handle_room_join_error {}", e);
-                    writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
+                    writer
+                        .write_all("Message format incorrect, retry".as_bytes())
+                        .await
+                        .unwrap();
                     continue;
                 }
             };
@@ -121,7 +170,10 @@ impl Server {
 
             if room_id_name.len() != 2 {
                 println!("handle_room_join_error Failed to parse the join message");
-                writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
+                writer
+                    .write_all("Message format incorrect, retry".as_bytes())
+                    .await
+                    .unwrap();
                 continue;
             }
 
@@ -143,7 +195,10 @@ impl Server {
                         Some(r) => r,
                         None => {
                             println!("handle_room_join_error Failed to create room");
-                            writer.write_all("Message format incorrect, retry".as_bytes()).await.unwrap();
+                            writer
+                                .write_all("Message format incorrect, retry".as_bytes())
+                                .await
+                                .unwrap();
                             continue;
                         }
                     }

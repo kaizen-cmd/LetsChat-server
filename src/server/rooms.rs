@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use futures::future;
 use tokio::{io::AsyncWriteExt, net::tcp::OwnedWriteHalf, sync::Mutex};
@@ -7,6 +7,7 @@ pub struct Room {
     id: u32,
     writers: Arc<Mutex<HashMap<String, OwnedWriteHalf>>>,
     addr_name_map: Arc<Mutex<HashMap<String, String>>>,
+    pub udp_clients: Arc<Mutex<HashSet<String>>>,
     member_limit: u8,
 }
 
@@ -16,6 +17,7 @@ impl Room {
             id,
             writers: Arc::new(Mutex::new(HashMap::new())),
             addr_name_map: Arc::new(Mutex::new(HashMap::new())),
+            udp_clients: Arc::new(Mutex::new(HashSet::new())),
             member_limit,
         }
     }
