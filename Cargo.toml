@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["rt", "net", "sync", "io-util", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "net", "sync", "io-util", "macros", "rt-multi-thread", "signal"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [profile.release]

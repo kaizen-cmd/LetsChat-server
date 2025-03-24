@@ -14,7 +14,6 @@ use tokio::{
 
 pub struct Server {
     listener: tokio::net::TcpListener,
-    udp_listener: tokio::net::UdpSocket,
     rooms_manager: RoomsManager,
 }
 
@@ -23,18 +22,14 @@ impl Server {
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
             .await
             .expect("Server failed to start");
-        let udp_listener = tokio::net::UdpSocket::bind("0.0.0.0:9000").await.unwrap();
         Server {
             listener,
-            udp_listener,
             rooms_manager: RoomsManager::new(),
         }
     }
 
     pub async fn start(server_instance: Arc<Server>) {
         println!("{}\n Listening on port 8000", arts::art());
-        let server_instance_clone = server_instance.clone();
-        // tcp server task
         tokio::spawn(async move {
             loop {
                 let (socket, addr) = match server_instance.listener.accept().await {
@@ -93,40 +88,6 @@ impl Server {
                             .await;
                     }
                 });
-            }
-        });
-
-        // udp server task
-        tokio::spawn(async move {
-            loop {
-                // first 4 bytes contain room id, next 256 bytes contain audio data
-                let mut buf = [0u8; 2080];
-                let (_bytes_read, src_addr) = server_instance_clone
-                    .udp_listener
-                    .recv_from(&mut buf)
-                    .await
-                    .unwrap();
-
-                let room_id = str::from_utf8(&buf[..31]).unwrap().parse::<u32>().unwrap();
-                let audio_data = &buf[32..];
-
-                // add src_addr to room if not present
-                let src_addr = src_addr.to_string();
-                let room = server_instance_clone.rooms_manager.get_room(room_id).await.unwrap();
-                let mut udp_clients = room.udp_clients.lock().await;
-                if !udp_clients.contains(&src_addr) {
-                    udp_clients.insert(src_addr.clone());
-                }
-                
-                // broadcast audio data
-                for c in udp_clients.iter() {
-                    if c == &src_addr {
-                        continue;
-                    }
-                    server_instance_clone.udp_listener.send_to(audio_data, c).await.unwrap();
-                }
-
-                drop(udp_clients);
             }
         });
     }
